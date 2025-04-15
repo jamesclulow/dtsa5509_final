@@ -1,0 +1,352 @@
+---
+title: "Week 7 - Final Project DTSA5509"
+author: "James Clulow"
+format: html
+editor: visual
+jupyter: python3
+bibliography: "references.bib"
+---
+
+```{python}
+## Setup and library import
+import os
+import shutil
+import zipfile
+import pandas as pd
+import matplotlib.pyplot as plt
+# from img2vec_pytorch import Img2Vec
+# from PIL import Image
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import accuracy_score, f1_score
+from skimage import io
+```
+
+# DTSA5509 Introduction to Machine Learning: Supervised Learning - Final Project
+
+## Introduction and Problem Description
+
+This Quarto notebook is for my final project for DTSA-5509 Introduction to Machine Learning: Supervised Learning. All of the required dependencies for this notebook are listed above in the setup cell. Please make sure you have the required packages installed to run the notebook.
+
+For my project, I wanted to look at a machine learning problem focusing on computer vision. I work in the coffee industry and an important problem in the industry is the reliable grading of green coffees (unroasted coffee). Arabica green coffee is graded by taking a sample of 300g and counting the number of visual defects in a sample. Additionally, a standardized roasting protocol is applied and sensory evaluation (cupping) is performed to detect any sensory defects in addition to any visual defects.
+
+There are multiple classes of visual defect and the process has been standardized by the [Specialty Coffee Association (SCA)](https://sca.coffee/) and the [Coffee Quality Institute (CQI)](https://www.coffeeinstitute.org/).
+
+The SCA method @spe2017washed for grading green arabica coffee breaks down coffee quality into 5 classes:
+
+-   **Specialty Grade Green Coffee (1):** Specialty green coffee beans have no more than 5 full defects in 300 grams of coffee. No primary defects are allowed. A maximum of 5% above or below screen size indicated is tolerated. Specialty coffee must possess at least one distinctive attribute in the body, flavor, aroma, or acidity. Must be free of faults and taints. No quakers are permitted. Moisture content is between 9-13%.
+
+-   **Premium Coffee Grade (2):** Premium coffee must have no more than 8 full defects in 300 grams.  Primary defects are permitted. A maximum of 5% above or below screen size indicated is tolerated.  Must possess at least one distinctive attribute in the body, flavor, aroma, or acidity. Must be free of faults and may contain only 3 quakers. Moisture content is between 9-13%.
+
+-   **Exchange Coffee Grade (3):** Exchange grade coffee must have no more than 9-23 full defects in 300 grams. It must be 50% by weight above screen size 15 with no more than 5% of screen size below 14. No cup faults are permitted and a maximum of 5 quakers are allowed. Moisture content is between 9-13%.
+
+-   **Below Standard Coffee Grade (4):** 24-86 defects in 300 grams.
+
+-   **Off Grade Coffee (5):** More than 86 defects in 300 grams.
+
+Coffee defects are broken down into **intrinsic defects** and **extrinsic defects**. **Intrinsic defects** are inherent to the beans themselves (i.e. full sour/full black), whereas **extrinsic defects** are related to the sample and not the beans (i.e. presence of foreign matter - stones or sticks in a sample). Defects are also classed as **primary** and **secondary** defects. In the SCA grading method, **primary defects** are penalized more than **secondary defects** due to the nature of the defects. The tables below summarize primary and secondary defects[@Carpenter_2021; @Griffin_2006].
+
+| Primary Defect | Number of occurrences equal to one full defect |
+|----------------|------------------------------------------------|
+| Full Black     | 1                                              |
+| Full Sour      | 1                                              |
+| Pod/Cherry     | 1                                              |
+| Large Stones   | 2                                              |
+| Medium Stones  | 5                                              |
+| Large Sticks   | 2                                              |
+| Medium Sticks  | 5                                              |
+
+: Primary Defects as described by the SCA green coffee grading method.
+
+| Secondary Defect | Number of occurrences equal to one full defect |
+|------------------|------------------------------------------------|
+| Parchment        | 2-3                                            |
+| Hull/Husk        | 2-3                                            |
+| Broken/Chipped   | 5                                              |
+| Insect Damage    | 2-5                                            |
+| Partial Black    | 2-3                                            |
+| Partial Sour     | 2-3                                            |
+| Floater          | 5                                              |
+| Shell            | 5                                              |
+| Small Stones     | 1                                              |
+| Small Sticks     | 1                                              |
+| Water Damage     | 2-5                                            |
+
+: Secondary Defects as described by the SCA green coffee grading method.
+
+As this is a classification problem, a machine learning model and computer vision system could (in theory) be reliably trained to complete the visual grading task saving a significant amount of time for green coffee graders. In December 2024, a team from Thailand recently published a paper in the Journal of Smart Agricultural Technology using a convolution neural network (CNN) to classify defects in arabica beans from Thailand @ARWATCHANANUKUL2024100680 . They made their [dataset](https://www.kaggle.com/datasets/sujitraarw/coffee-green-bean-with-17-defects-original) available to the public on Kaggle @Arwatchananukul_2024 . While CNNs are best suited to this type of data, there is a case for using a pre-trained CNN for feature extraction followed by other classification techniques such as those we covered in DTSA5509 @https://doi.org/10.1155/2022/2013181. I wanted to apply and evaluate the performance of the following three supervised learning techniques that were covered in DTSA5509:
+
+1.  KNN Classification
+
+2.  Gradient Boost Classification
+
+3.  Random Forest Classification
+
+They breakdown the defects into more classes than those used by the SCA grading system. In total there are 17 classes as shown in the image below:
+
+![Green coffee defect classes in the dataset - Taken from @ARWATCHANANUKUL2024100680](img/defect_classes.jpg)
+
+## Image Pre-processing and Augmentation
+
+```{python}
+def unzip_data_raw(data_raw_pth):
+    zip_path = 'inst/data_raw.zip'
+    data_raw_path = data_raw_pth
+    # Check if data_raw.zip exists in inst folder
+    if not os.path.exists(zip_path):
+        return "Error: data_raw.zip does not exist in the inst folder."
+    # Overwrite the data_raw folder if it already exists
+    if os.path.exists(data_raw_path):
+        shutil.rmtree(data_raw_path)
+
+    # Extract the zip file to data_raw folder
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(data_raw_path)
+        
+    return "Raw data unzipped successfully."
+
+def count_files_per_directory(path):
+    # Create a dictionary to store folder names and their corresponding file counts
+    file_count = {}
+
+    # Walk through the directory
+    for root, dirs, files in os.walk(path):
+        # Get the last part of the directory path (the subdirectory name)
+        subdirectory_name = os.path.basename(root)
+
+        # Count files in the current directory
+        if root != path:  # Skip the root directory
+            file_count[subdirectory_name] = len(files)
+
+    # Convert the dictionary to a DataFrame for better visualization
+    df = pd.DataFrame(list(file_count.items()), 
+                      columns=['Subdirectory Name', 'Number of Files'])
+    
+    # Display the DataFrame
+    return print(df)
+    
+def create_training_labels_csv(raw_path, out_path):   
+    # Check if data_raw path exists
+    if not os.path.exists(raw_path):
+        return "Error: data_raw directory does not exist."
+    
+    # Create data directory and overwrite if already exists
+    os.makedirs(out_path, exist_ok=True)
+
+    # Create a list to store paths and labels
+    labels = []
+
+    # Walk through the directory
+    for root, dirs, files in os.walk(raw_path):
+        # Get the label from the directory name (subdirectory)
+        label = os.path.basename(root)
+        # Iterate over each file in the current directory
+        for file in files:
+            # Construct the full file path
+            file_path = os.path.join(root, 
+                                     file)
+            # Append the file path and label to the labels list
+            labels.append((file_path, 
+                           label))
+
+    # Convert the list to a DataFrame for better visualization
+    df = pd.DataFrame(labels, columns=['image_path', 
+                                       'label'])
+
+    # Split the data into training and testing sets
+    train_df, test_df = train_test_split(df, 
+                                         test_size=0.2, 
+                                         stratify=df['label'], 
+                                         random_state=42)
+    
+    # Define the output CSV file paths
+    output_train_csv_path = os.path.join(out_path, 'training_labels.csv')
+    output_test_csv_path = os.path.join(out_path, 'testing_labels.csv')
+
+    # Export the DataFrames to CSV files
+    train_df.to_csv(output_train_csv_path, index=False)
+    test_df.to_csv(output_test_csv_path, index=False)
+
+    # Print the paths of the saved CSV files
+    print(f'Training DataFrame exported to: {output_train_csv_path}')
+    print(f'Testing DataFrame exported to: {output_test_csv_path}')
+
+    return(train_df, test_df)
+
+def copy_files_to_label_subdirectories(df, target_directory):
+    
+    # Iterate through each row in the DataFrame
+    for index, row in df.iterrows():
+        image_path = row['image_path']
+        label = row['label']
+
+        # Create the target subdirectory path
+        label_directory = (target_directory + '/' + label)
+        
+        # Create the directory if it doesn't exist
+        os.makedirs(label_directory, exist_ok=True)
+
+        # Copy the file to the corresponding label subdirectory
+        try:
+            if os.path.exists(label_directory):
+                shutil.copy(image_path, label_directory)
+        except Exception as e:
+            print(f'Error copying {image_path} to {label_directory}: {e}')
+
+```
+
+For the image pre-processing, first we start by unzipping the raw data files from 'inst/data_raw.zip' to 'data_raw'. Then we create a 80/20 train/test split of the files in a new directory 'data'. The training data is augmented and information on the train/test split is stored in the 'data\training_labels.csv' and 'data\testing_labels.csv' files. Finally, we output a count of all files in the original dataset for each defect class as well as the counts for all files in the train/test datasets.
+
+```{python}
+# Create path variables
+data_raw_pth = 'data_raw'
+data_pth = 'data'
+test_path = 'data/test'
+train_path = 'data/train'
+
+# Unzip data_raw.zip
+unzip_data_raw(data_raw_pth)
+
+# Create training_labels.csv
+train_df, test_df = create_training_labels_csv(data_raw_pth, out_path = data_pth)
+
+# Copy files to train
+copy_files_to_label_subdirectories(train_df, train_path)  
+
+# Copy files to test
+copy_files_to_label_subdirectories(test_df, test_path)
+
+count_files_per_directory(data_raw_pth)
+count_files_per_directory(train_path)
+count_files_per_directory(test_path)
+```
+
+## High Level Feature Extraction using a Pre-trained model
+
+```{python}
+# Initialize Image2Vec
+img2vec = Img2Vec()
+
+# Define train and test paths
+train_path = os.path.join(data_pth, 'train')
+test_path = os.path.join(data_pth, 'test')
+
+# Initialize data
+data = {}
+
+# Iterate through test and train sets
+for j, dir_ in enumerate([train_path, test_path]):
+    features = [] # Init features
+    labels = []   # Init lables
+    for category in os.listdir(dir_):
+        for img_path in os.listdir(os.path.join(dir_, category)):
+            img_path_ = os.path.join(dir_, category, img_path)
+            img = Image.open(img_path_)
+
+            img_features = img2vec.get_vec(img)
+
+            features.append(img_features)
+            labels.append(category)
+
+    data[['training_data', 'test_data'][j]] = features
+    data[['training_labels', 'test_labels'][j]] = labels
+```
+
+## Training Classification Models
+
+### K-Nearest Neighbours Classifier
+
+```{python}
+# Train KNN Model
+knn_model = KNeighborsClassifier(n_neighbors=20)
+knn_model.fit(data['training_data'], data['training_labels'])
+```
+
+### Gradient Boosting Classifier
+
+```{python}
+# Train Gradient Boosting Model
+gboost_model = GradientBoostingClassifier(n_estimators=200, random_state=99)
+gboost_model.fit(data['training_data'], data['training_labels'])
+```
+
+### Random Forest Classifier
+
+```{python}
+# Train Random Forest Model
+rf_model = RandomForestClassifier(random_state=99)
+rf_model.fit(data['training_data'], data['training_labels'])
+```
+
+## Model Performance Metrics
+
+### K-Nearest Neighbours Classifier
+
+### Gradient Boosting Classifier
+
+### Random Forest Classifier
+
+```{python}
+# Test model performance
+y_true = data['test_labels']
+y_pred = rf_model.predict(data['test_data'])
+score = accuracy_score(y_true, y_pred)
+f1score = f1_score(y_true, y_pred, average = 'weighted')
+print("Random Forest Accuracy", score)
+print("Random Forest F1 Score", f1score)
+cm = confusion_matrix(data['test_labels'], y_pred, labels=rf_model.classes_, normalize = 'true')
+disp = ConfusionMatrixDisplay(confusion_matrix=cm,
+                              display_labels=rf_model.classes_)
+disp.plot()
+plt.show()
+y_pred = ada_model.predict(data['test_data'])
+score = accuracy_score(y_true, y_pred)
+f1score = f1_score(y_true, y_pred, average = 'weighted')
+print("AdaBoost Accuracy", score)
+print("AdaBoost F1 Score", f1score)
+cm = confusion_matrix(data['test_labels'], y_pred, labels=ada_model.classes_, normalize = 'true')
+disp = ConfusionMatrixDisplay(confusion_matrix=cm,
+                              display_labels=ada_model.classes_)
+disp.plot()
+plt.show()
+
+y_pred = knn_model.predict(data['test_data'])
+score = accuracy_score(y_pred, data['test_labels'])
+f1score = f1_score(y_true, y_pred, average = 'weighted')
+print("KNN Accuracy", score)
+print("KNN F1 Score", f1score)
+cm = confusion_matrix(data['test_labels'], y_pred, labels=knn_model.classes_, normalize = 'true')
+disp = ConfusionMatrixDisplay(confusion_matrix=cm,
+                              display_labels=knn_model.classes_)
+disp.plot()
+plt.show()
+
+y_pred = MLP_model.predict(data['test_data'])
+score = accuracy_score(y_pred, data['test_labels'])
+f1score = f1_score(y_true, y_pred, average = 'weighted')
+print("NN MLP Accuracy", score)
+print("NN MLP F1 Score", f1score)
+cm = confusion_matrix(data['test_labels'], y_pred, labels=MLP_model.classes_, normalize = 'true')
+disp = ConfusionMatrixDisplay(confusion_matrix=cm,
+                              display_labels=MLP_model.classes_)
+disp.plot()
+plt.show()
+```
+
+## Comparison Between Models
+
+## Conclusions
+
+## References {#refs}
+
+## System Information
+
+```{python}
+import platform
+print(platform.platform())
+print(platform.processor())
+print("python version:", platform.python_version())
+```
