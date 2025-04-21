@@ -175,3 +175,6 @@ cython_debug/
 
 # Image files
 *.jpg
+
+# .csv files
+*.csv

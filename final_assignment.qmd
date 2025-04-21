@@ -8,6 +8,8 @@ bibliography: "references.bib"
 ---
 
 ```{python}
+#| label: setup-libraries
+
 ## Setup and library import
 import os
 import shutil
@@ -16,85 +18,25 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import cv2
 import numpy as np
+import torch
 
-from sklearn.model_selection import train_test_split
-from sklearn import preprocessing
 from keras.applications.vgg16 import VGG16
+import xgboost as xgb
+from sklearn.model_selection import train_test_split, KFold, GridSearchCV, cross_val_score, RandomizedSearchCV
+from sklearn import preprocessing
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
-import xgboost as xgb
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score, f1_score
+from sklearn.metrics import classification_report, roc_auc_score, accuracy_score
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, RocCurveDisplay
+from IPython.display import Markdown, display
 ```
 
-
-# DTSA5509 Introduction to Machine Learning: Supervised Learning - Final Project
-
-## Introduction and Problem Description
-
-This Quarto notebook is for my final project for DTSA-5509 Introduction to Machine Learning: Supervised Learning. All of the required dependencies for this notebook are listed above in the setup cell. Please make sure you have the required packages installed to run the notebook.
-
-For my project, I wanted to look at a machine learning problem focusing on computer vision. I work in the coffee industry and an important problem in the industry is the reliable grading of green coffees (unroasted coffee). Arabica green coffee is graded by taking a sample of 300g and counting the number of visual defects in a sample. Additionally, a standardized roasting protocol is applied and sensory evaluation (cupping) is performed to detect any sensory defects in addition to any visual defects.
-
-There are multiple classes of visual defect and the process has been standardized by the [Specialty Coffee Association (SCA)](https://sca.coffee/) and the [Coffee Quality Institute (CQI)](https://www.coffeeinstitute.org/).
-
-The SCA method @spe2017washed for grading green arabica coffee breaks down coffee quality into 5 classes:
-
--   **Specialty Grade Green Coffee (1):** Specialty green coffee beans have no more than 5 full defects in 300 grams of coffee. No primary defects are allowed. A maximum of 5% above or below screen size indicated is tolerated. Specialty coffee must possess at least one distinctive attribute in the body, flavor, aroma, or acidity. Must be free of faults and taints. No quakers are permitted. Moisture content is between 9-13%.
-
--   **Premium Coffee Grade (2):** Premium coffee must have no more than 8 full defects in 300 grams.  Primary defects are permitted. A maximum of 5% above or below screen size indicated is tolerated.  Must possess at least one distinctive attribute in the body, flavor, aroma, or acidity. Must be free of faults and may contain only 3 quakers. Moisture content is between 9-13%.
-
--   **Exchange Coffee Grade (3):** Exchange grade coffee must have no more than 9-23 full defects in 300 grams. It must be 50% by weight above screen size 15 with no more than 5% of screen size below 14. No cup faults are permitted and a maximum of 5 quakers are allowed. Moisture content is between 9-13%.
-
--   **Below Standard Coffee Grade (4):** 24-86 defects in 300 grams.
-
--   **Off Grade Coffee (5):** More than 86 defects in 300 grams.
-
-Coffee defects are broken down into **intrinsic defects** and **extrinsic defects**. **Intrinsic defects** are inherent to the beans themselves (i.e. full sour/full black), whereas **extrinsic defects** are related to the sample and not the beans (i.e. presence of foreign matter - stones or sticks in a sample). Defects are also classed as **primary** and **secondary** defects. In the SCA grading method, **primary defects** are penalized more than **secondary defects** due to the nature of the defects. The tables below summarize primary and secondary defects[@Carpenter_2021; @Griffin_2006].
-
-| Primary Defect | Number of occurrences equal to one full defect |
-|----------------|------------------------------------------------|
-| Full Black     | 1                                              |
-| Full Sour      | 1                                              |
-| Pod/Cherry     | 1                                              |
-| Large Stones   | 2                                              |
-| Medium Stones  | 5                                              |
-| Large Sticks   | 2                                              |
-| Medium Sticks  | 5                                              |
-
-: Primary Defects as described by the SCA green coffee grading method.
-
-| Secondary Defect | Number of occurrences equal to one full defect |
-|------------------|------------------------------------------------|
-| Parchment        | 2-3                                            |
-| Hull/Husk        | 2-3                                            |
-| Broken/Chipped   | 5                                              |
-| Insect Damage    | 2-5                                            |
-| Partial Black    | 2-3                                            |
-| Partial Sour     | 2-3                                            |
-| Floater          | 5                                              |
-| Shell            | 5                                              |
-| Small Stones     | 1                                              |
-| Small Sticks     | 1                                              |
-| Water Damage     | 2-5                                            |
-
-: Secondary Defects as described by the SCA green coffee grading method.
-
-As this is a classification problem, a machine learning model and computer vision system could (in theory) be reliably trained to complete the visual grading task saving a significant amount of time for green coffee graders. In December 2024, a team from Thailand recently published a paper in the Journal of Smart Agricultural Technology using a convolution neural network (CNN) to classify defects in arabica beans from Thailand @ARWATCHANANUKUL2024100680 . They made their [dataset](https://www.kaggle.com/datasets/sujitraarw/coffee-green-bean-with-17-defects-original) available to the public on Kaggle @Arwatchananukul_2024 . While CNNs are best suited to this type of data, there is a case for using a pre-trained CNN for feature extraction followed by other classification techniques such as those we covered in DTSA5509 @https://doi.org/10.1155/2022/2013181. I wanted to apply and evaluate the performance of the following three supervised learning techniques that were covered in DTSA5509:
-
-1.  KNN Classification
-
-2.  Gradient Boost Classification
-
-3.  Random Forest Classification
-
-They breakdown the defects into more classes than those used by the SCA grading system. In total there are 17 classes as shown in the image below:
-
-![Green coffee defect classes in the dataset - Taken from @ARWATCHANANUKUL2024100680](img/defect_classes.jpg)
-
-## Image Pre-processing and Loading
-
 ```{python}
+#| label: support-functions
+
+# Support functions
 def unzip_data_raw(data_raw_pth):
+    # Function to unzip raw data
     zip_path = 'inst/data_raw.zip'
     data_raw_path = data_raw_pth
     # Check if data_raw.zip exists in inst folder
@@ -179,7 +121,6 @@ def create_training_labels_csv(raw_path, out_path):
     return(train_df, test_df)
 
 def copy_files_to_label_subdirectories(df, target_directory):
-    
     # Iterate through each row in the DataFrame
     for index, row in df.iterrows():
         image_path = row['image_path']
@@ -210,11 +151,141 @@ def create_image_and_label_arrays(df):
     # Convert to np.array
     images_array, labels_array = np.array(images), np.array(df['label'])
     return images_array, labels_array
+
+def result_random_img(model, X_test, test_labels, feature_extractor, le):
+    # Check results using a random image
+    mdl = model
+    n = np.random.randint(0, X_test.shape[0])
+    img = X_test[n]
+
+    input_img = np.expand_dims(img, axis=0) # Expand dims so the input is (num images, x, y, c)
+    input_img_feature = feature_extractor.predict(input_img)
+    input_img_features = input_img_feature.reshape(input_img_feature.shape[0], -1)
+    pred = mdl.predict(input_img_features)[0] 
+    pred = le.inverse_transform([pred])  # Reverse the label encoder to original name
+    print("The prediction for this image is: ", pred[0])
+    print("The actual label for this image is: ", test_labels[n])
+    plt.imshow(img)
+
+def plot_confusion_matrix(model, y_true, y_pred, le):
+    mdl = model
+    cm = confusion_matrix(y_true, y_pred, labels=le.inverse_transform(mdl.classes_))
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm,
+                              display_labels=le.inverse_transform(mdl.classes_))
+    disp.plot()
+    plt.xticks(rotation=90)
+    plt.title(f"Confusion Matrix for {model.__class__.__name__}")
+    plt.show()
+
+def compare_classification_reports(list_of_models, y_test, X_test):
+    reports = []
+    
+    for model in list_of_models:
+        y_pred = model.predict(X_test)
+        report = classification_report(y_test, y_pred, output_dict=True)
+        report_df = pd.DataFrame(report).transpose()
+        report_df['model'] = model.__class__.__name__
+        reports.append(report_df)
+    
+    comparison_df = pd.concat(reports)
+    comparison_df.reset_index(inplace=True)
+    comparison_df.rename(columns={'index': 'metric'}, inplace=True)
+    
+    return comparison_df
+
+def plot_ROC_for_all(list_of_models, y_train, y_test, X_test):
+    label_binarizer = preprocessing.LabelBinarizer().fit(y_train)
+    y_onehot_test = label_binarizer.transform(y_test)
+    plt.figure(figsize=(10, 8))
+    
+    for i, model in enumerate(list_of_models):
+        y_score = model.predict_proba(X_test)
+        display = RocCurveDisplay.from_predictions(
+            y_onehot_test.ravel(),
+            y_score.ravel(),
+            name=f"micro-average OvR for {model.__class__.__name__}",
+            plot_chance_level=(i == len(list_of_models) - 1),
+            ax=plt.gca()
+            )
+
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("Micro-averaged One-vs-Rest\nReceiver Operating Characteristic for All Models")
+    plt.legend(loc="best")
+    plt.show()
 ```
 
-For the image pre-processing, first we start by unzipping the raw data files from 'inst/data_raw.zip' to 'data_raw'. Then we create a 80/20 train/test split of the files in a new directory 'data'. The information on the train/test split is stored in the 'data\training_labels.csv' and 'data\testing_labels.csv' files. Finally, we output a count of all files in the original dataset for each defect class as well as the counts for all files in the train/test datasets.
+# DTSA5509 Introduction to Machine Learning: Supervised Learning - Final Project
+
+## Introduction and Problem Description
+
+This Quarto notebook is for my final project for DTSA-5509 Introduction to Machine Learning: Supervised Learning. All of the required dependencies for this notebook are listed above in the setup cell. Please make sure you have the required packages installed to run the notebook.
+
+For my project, I wanted to look at a machine learning problem focusing on computer vision. I work in the coffee industry and an important problem in the industry is the reliable grading of green coffees (unroasted coffee). Arabica green coffee is graded by taking a sample of 300g and counting the number of visual defects in a sample. Additionally, a standardized roasting protocol is applied and sensory evaluation (cupping) is performed to detect any sensory defects in addition to any visual defects.
+
+There are multiple classes of visual defect and the process has been standardized by the [Specialty Coffee Association (SCA)](https://sca.coffee/) and the [Coffee Quality Institute (CQI)](https://www.coffeeinstitute.org/).
+
+The SCA method @spe2017washed for grading green arabica coffee breaks down coffee quality into 5 classes:
+
+-   **Specialty Grade Green Coffee (1):** Specialty green coffee beans have no more than 5 full defects in 300 grams of coffee. No primary defects are allowed. A maximum of 5% above or below screen size indicated is tolerated. Specialty coffee must possess at least one distinctive attribute in the body, flavor, aroma, or acidity. Must be free of faults and taints. No quakers are permitted. Moisture content is between 9-13%.
+
+-   **Premium Coffee Grade (2):** Premium coffee must have no more than 8 full defects in 300 grams. Primary defects are permitted. A maximum of 5% above or below screen size indicated is tolerated. Must possess at least one distinctive attribute in the body, flavor, aroma, or acidity. Must be free of faults and may contain only 3 quakers. Moisture content is between 9-13%.
+
+-   **Exchange Coffee Grade (3):** Exchange grade coffee must have no more than 9-23 full defects in 300 grams. It must be 50% by weight above screen size 15 with no more than 5% of screen size below 14. No cup faults are permitted and a maximum of 5 quakers are allowed. Moisture content is between 9-13%.
+
+-   **Below Standard Coffee Grade (4):** 24-86 defects in 300 grams.
+
+-   **Off Grade Coffee (5):** More than 86 defects in 300 grams.
+
+Coffee defects are broken down into **intrinsic defects** and **extrinsic defects**. **Intrinsic defects** are inherent to the beans themselves (i.e. full sour/full black), whereas **extrinsic defects** are related to the sample and not the beans (i.e. presence of foreign matter - stones or sticks in a sample). Defects are also classed as **primary** and **secondary** defects. In the SCA grading method, **primary defects** are penalized more than **secondary defects** due to the nature of the defects. @tbl-primary_defects and @tbl-secondary_defects below summarize primary and secondary defects[@Carpenter_2021; @Griffin_2006].
+
+| Primary Defect | Number of occurrences equal to one full defect |
+|----------------|------------------------------------------------|
+| Full Black     | 1                                              |
+| Full Sour      | 1                                              |
+| Pod/Cherry     | 1                                              |
+| Large Stones   | 2                                              |
+| Medium Stones  | 5                                              |
+| Large Sticks   | 2                                              |
+| Medium Sticks  | 5                                              |
+
+: Primary Defects as described by the SCA green coffee grading method. {#tbl-primary_defects}
+
+| Secondary Defect | Number of occurrences equal to one full defect |
+|------------------|------------------------------------------------|
+| Parchment        | 2-3                                            |
+| Hull/Husk        | 2-3                                            |
+| Broken/Chipped   | 5                                              |
+| Insect Damage    | 2-5                                            |
+| Partial Black    | 2-3                                            |
+| Partial Sour     | 2-3                                            |
+| Floater          | 5                                              |
+| Shell            | 5                                              |
+| Small Stones     | 1                                              |
+| Small Sticks     | 1                                              |
+| Water Damage     | 2-5                                            |
+
+: Secondary Defects as described by the SCA green coffee grading method. {#tbl-secondary_defects}
+
+As this is a classification problem, a machine learning model and computer vision system could (in theory) be reliably trained to complete the visual grading task saving a significant amount of time for green coffee graders. In December 2024, a team from Thailand recently published a paper in the Journal of Smart Agricultural Technology using a convolution neural network (CNN) to classify defects in arabica beans from Thailand @ARWATCHANANUKUL2024100680 . They made their [dataset](https://www.kaggle.com/datasets/sujitraarw/coffee-green-bean-with-17-defects-original) available to the public on Kaggle @Arwatchananukul_2024 . While CNNs are best suited to this type of data, there is a case for using a pre-trained CNN for feature extraction followed by other classification techniques such as those we covered in DTSA5509 @https://doi.org/10.1155/2022/2013181. I wanted to apply and evaluate the performance of the following three supervised learning techniques that were covered in DTSA5509:
+
+1.  KNN Classification
+
+2.  Random Forest Classification
+
+3.  XGBoost Classification
+
+They breakdown the defects into more classes than those used by the SCA grading system. In total there are 17 classes as shown in the image below:
+
+![Green coffee defect classes in the dataset - Taken from @ARWATCHANANUKUL2024100680](img/defect_classes.jpg)
+
+## Image Pre-processing and Loading
+
+For the image pre-processing, first we start by unzipping the raw data files from `inst/data_raw.zip` to `data_raw`. Then we create a 80/20 train/test split of the files in a new directory 'data'. The information on the train/test split is stored in the `data\training_labels.csv` and `data\testing_labels.csv` files. Finally, we output a count of all files in the original dataset for each defect class as well as the counts for all files in the train/test datasets.
 
 ```{python}
+#| label: extract-pre-processing
+
 # Create path variables
 data_raw_pth = 'data_raw'
 data_pth = 'data'
@@ -233,6 +304,7 @@ copy_files_to_label_subdirectories(train_df, train_path)
 # Copy files to test
 copy_files_to_label_subdirectories(test_df, test_path)
 
+# Return counts per directory for all classes/subdirectories
 count_files_per_directory(data_raw_pth)
 count_files_per_directory(train_path)
 count_files_per_directory(test_path)
@@ -241,6 +313,8 @@ count_files_per_directory(test_path)
 Then we load images and resize them to 256x256 pixels (down from 512x512) to save on memory. Labels are loaded and encoded to integers instead of strings for use in the model. Pixel values from the images are normalized to values between 0 and 1.
 
 ```{python}
+#| label: load-images
+
 # Define parameters for image loading/resizing
 img_height = 256
 img_width = 256
@@ -260,23 +334,31 @@ train_labels_enc = label_enc.transform(train_labels)
 train_images, test_images = train_images / 255.0, test_images / 255.0
 
 # Assign test and train datasets to conventional variable names
-x_train, y_train, x_test, y_test = train_images, train_labels_enc, test_images, test_labels_enc
+X_train, y_train, X_test, y_test = train_images, train_labels_enc, test_images, test_labels_enc
+y_true = test_labels
 ```
 
-After loading the images we test plotting a random image with its label to be sure that we have loaded the images and labels correctly.
+After loading the images we test by plotting a random image with its label to be sure that we have loaded the images and labels correctly.
 
 ```{python}
+#| label: randimg-check
+#| fig-cap: "Random Image with Label to check loading"
+
 # Check a random image to make sure that loading has worked correctly 
-n = np.random.randint(0, x_test.shape[0])
-img = x_test[n]
+n = np.random.randint(0, X_test.shape[0])
+img = X_test[n]
 plt.imshow(img)
 print("The label for this image is: ", test_labels[n])
 ```
 
 ## High Level Feature Extraction using a Pre-trained model
 
+To conduct image analysis on the coffee dataset, I chose to use a pre-trained convolution neural network to extract high level features for training KNN, Random Forest, and XGBoost classifier models. I used a [VGG16 model](https://keras.io/api/applications/vgg/) with pre-trained weights from [ImageNet](https://www.image-net.org/) available through the [Keras API](https://keras.io). I load a pre-trained VGG16 model that is non-trainable to work only using the pre-trained weights.
+
 ```{python}
-### Setup pretrained model using imagenet weights
+#| label: setup-pretrained-featext
+
+# Setup pretrained model using imagenet weights
 # Load pretrained model without classifier/fully connected layers
 vgg_mdl = VGG16(weights='imagenet', 
 include_top=False, 
@@ -289,151 +371,281 @@ for layer in vgg_mdl.layers:
 vgg_mdl.summary()  # Trainable parameters will be 0
 ```
 
+Once the VGG16 model has been loaded, we can use it as a feature extractor to create our `classifier_X_train` and `classifier_X_test` datasets that will be used to train the classification models.
+
 ```{python}
-### Extract features from pretrained CNN on training set
-extracted_features = vgg_mdl.predict(x_train)
+#| label: extract-train-features
+
+# Extract features from pretrained CNN on training set
+extracted_features = vgg_mdl.predict(X_train)
 
 # Reshape to create X_train for the classifier (KNN, RF, GradientBoosting)
 classifier_X_train = extracted_features.reshape(extracted_features.shape[0], -1)
 ```
 
-## Training Classification Models
-
-### K-Nearest Neighbours Classifier
-
 ```{python}
-# Train KNN Model
-knn_model = KNeighborsClassifier(n_neighbors=20)
-knn_model.fit(classifier_X_train, y_train)
-```
+#| label: extract-test-features
 
-### XGBoost Classifier
-
-```{python}
-# Train XGBoost Model
-xgboost_model = xgb.XGBClassifier(tree_method="hist")
-xgboost_model.fit(classifier_X_train, y_train)
-```
-
-### Random Forest Classifier
-
-```{python}
-# Train Random Forest Model
-rf_model = RandomForestClassifier(n_estimators = 200, random_state=42)
-rf_model.fit(classifier_X_train, y_train)
-```
-
-## Model Performance Metrics
-
-```{python}
 ### Extract features from pretrained CNN on test set
-extracted_test_features = vgg_mdl.predict(x_test)
+extracted_test_features = vgg_mdl.predict(X_test)
 
 # Reshape to create X_test for the classifier (KNN, RF, GradientBoosting)
 classifier_X_test = extracted_test_features.reshape(extracted_test_features.shape[0], -1)
 ```
 
+## Training Classification Models
+
+Now that the features have been extracted using the VGG16 pre-trained model and the data reshaped to create the `classifier_X_train` and `classifier_X_test` datasets, we can start to train and optimise our classification models.
+
 ### K-Nearest Neighbours Classifier
 
+I start by training a KNN classifier and optimise the number of neighbours screening values between 1 and 30 using 5 fold cross validation and accuracy as a metric. This is done using the code shown below (I will spare you the computational effort to run it).
+
 ```{python}
-y_true = test_labels
-y_pred_tf = knn_model.predict(classifier_X_test)
-y_pred = label_enc.inverse_transform(y_pred_tf)
+#| label: optimise-knn_model
+#| eval: false
+#| echo: true
 
-accuracy = accuracy_score(y_true, y_pred)
-f1score = f1_score(y_true, y_pred, average = 'weighted')
+# Train KNN Model and optimise n_neighbors using cross_val_score
+k_values = np.arange(1, 31)
+scores = []
 
-print("KNN Accuracy", accuracy)
-print("KNN F1 Score", f1score)
+for k in k_values:
+    knn = KNeighborsClassifier(n_neighbors=k)
+    score = cross_val_score(knn, classifier_X_train, y_train, cv=5, scoring = 'accuracy')
+    scores.append(np.mean(score))
 
-cm = confusion_matrix(y_true, y_pred, labels=label_enc.inverse_transform(knn_model.classes_))
-disp = ConfusionMatrixDisplay(confusion_matrix=cm,
-                              display_labels=label_enc.inverse_transform(knn_model.classes_))
-disp.plot()
-plt.xticks(rotation=90)
+# Plot Accuracy vs k Neighbours
+plt.plot(k_values, scores)  
+plt.xlabel('k neighbours')
+plt.ylabel('Accuracy score')  
+plt.title('Accuracy score vs k neighbours for KNN Model') 
 plt.show()
-
-# Check results on a random image
-n = np.random.randint(0, x_test.shape[0])
-img = x_test[n]
-plt.imshow(img)
-input_img = np.expand_dims(img, axis=0) # Expand dims so the input is (num images, x, y, c)
-input_img_feature = vgg_mdl.predict(input_img)
-input_img_features = input_img_feature.reshape(input_img_feature.shape[0], -1)
-pred = knn_model.predict(input_img_features)[0] 
-pred = label_enc.inverse_transform([pred])  # Reverse the label encoder to original name
-print("The prediction for this image is: ", pred)
-print("The actual label for this image is: ", test_labels[n])
 ```
 
-### XGBoost Classifier
+![KNN Accuracy vs. k_neighbours](img/knn_accuracy_neighbours.png)
+
+The resulting plot shows that the highest accuracy achieved during the cross validation is with a k of 6. So we use 6 as the number of neighbors for the final model.
 
 ```{python}
-y_pred_tf = xgboost_model.predict(classifier_X_test)
-y_pred = label_enc.inverse_transform(y_pred_tf)
+#| label: train-knn_model
 
-accuracy = accuracy_score(y_true, y_pred)
-f1score = f1_score(y_true, y_pred, average = 'weighted')
-
-print("GradientBoost Accuracy", accuracy)
-print("GradientBoost F1 Score", f1score)
-
-cm = confusion_matrix(y_true, y_pred, labels=label_enc.inverse_transform(xgboost_model.classes_))
-disp = ConfusionMatrixDisplay(confusion_matrix=cm,
-                              display_labels=label_enc.inverse_transform(xgboost_model.classes_))
-disp.plot()
-plt.xticks(rotation=90)
-plt.show()
-
-# Check results on a random image
-n = np.random.randint(0, x_test.shape[0])
-img = x_test[n]
-plt.imshow(img)
-input_img = np.expand_dims(img, axis=0) # Expand dims so the input is (num images, x, y, c)
-input_img_feature = vgg_mdl.predict(input_img)
-input_img_features = input_img_feature.reshape(input_img_feature.shape[0], -1)
-pred = xgboost_model.predict(input_img_features)[0] 
-pred = label_enc.inverse_transform([pred])  # Reverse the label encoder to original name
-print("The prediction for this image is: ", pred)
-print("The actual label for this image is: ", test_labels[n])
+# Train optimized KNN model
+knn_model = KNeighborsClassifier(n_neighbors = 6)
+knn_model.fit(classifier_X_train, y_train)
 ```
 
 ### Random Forest Classifier
 
+Next we start by training a Random Forest classifier and optimizing on the number of estimators to use. The code used for the optimization is shown below, but I will spare you the computational effort to run it.
+
 ```{python}
+#| label: optimise-rf_model
+#| eval: false
+#| echo: true
+
+# Train Random Forest Model and optimise n_estimators using accuracy score
+n_values = np.arange(100, 1700, 100)
+scores = []
+
+for n in n_values:
+    rf = RandomForestClassifier(n_estimators=n, max_depth=60, random_state=42, bootstrap = False)
+    score = cross_val_score(rf, classifier_X_train, y_train, cv=3, scoring = 'accuracy')
+    scores.append(np.mean(score))
+
+# Plot Accuracy vs n estimators
+plt.plot(n_values, scores)  
+plt.xlabel('n estimators')
+plt.ylabel('Accuracy score')  
+plt.title('Accuracy score vs n estimators for Random Forest Model') 
+plt.show()
+```
+
+The optimal value for the number of estimators is 400 and achieves the highest accuracy as shown in the plot below. The final model is trained on 400 learners.
+
+![Random Forest Accuracy vs. n_learners](img/rf_accuracy_nlearners.png)
+
+```{python}
+#| label: train-rf_model
+
+# Train optimized Random Forest Model
+rf_model = RandomForestClassifier(n_estimators = 400, max_depth=60, random_state=42, bootstrap = False)
+rf_model.fit(classifier_X_train, y_train)
+rf_model
+```
+
+### XGBoost Classifier
+
+Finally, I trained an XGBoost classifier using the histogram tree method. I opted not to perform cross validation on this model as it took a significant amount of time to train on my laptop which has limited RAM and computing power.
+
+```{python}
+#| label: train-xgboost_model
+
+# Train XGBoost Model
+xgboost_model = xgb.XGBClassifier(tree_method="hist")
+xgboost_model.fit(classifier_X_train, y_train)
+```
+
+## Model Performance Metrics
+
+To evaluate the performance of each model, we will look at the classification report summary and micro-averaged One-vs-Rest ROC AUC score as metrics. I also plot a confusion matrix for each model as well as plotting a random image with its true label and predicted label.
+
+### K-Nearest Neighbours Classifier
+
+```{python}
+#| label: classification_report-knn_model
+
+# Test model performance
+y_pred_tf = knn_model.predict(classifier_X_test)
+y_pred = label_enc.inverse_transform(y_pred_tf)
+y_score = knn_model.predict_proba(classifier_X_test)
+
+print(classification_report(y_true, y_pred))
+
+micro_roc_auc_ovr = roc_auc_score(
+    y_true,
+    y_score,
+    multi_class="ovr",
+    average="micro"
+)
+
+print(f"Micro-averaged One-vs-Rest ROC AUC score:\n{micro_roc_auc_ovr:.2f}")
+```
+
+The full classification report for KNN model shows an overall accuracy of 0.48 which is not very good. The ROC AUC is 0.83 which is not great either. Several classes have poor precision using this model and it leaves much to be desired.
+
+```{python}
+#| label: cm-knn_model
+#| fig-cap: "Confusion Matrix for KNN Model"
+
+# Plot Confusion Matrix for KNN Model
+plot_confusion_matrix(knn_model, y_true=y_true, y_pred=y_pred, le = label_enc)
+```
+
+Looking at the confusion matrix, we can see that some classes have decent performance i.e. "Husk", "Full Black", "Parchment", but others have poor performance, such as the "Withered" class.
+
+```{python}
+#| label: randimg-KNN_model
+#| fig-cap: "Random Image with Label and Prediction using KNN Model"
+
+# Check the results of a random image with the KNN model
+result_random_img(knn_model, X_test=X_test, test_labels= y_true, feature_extractor=vgg_mdl, le=label_enc)
+```
+
+The random image above shows its true label and the predicted label using the KNN model.
+
+### Random Forest Classifier
+
+```{python}
+#| label: classification_report-rf_model
+
 # Test model performance
 y_pred_tf = rf_model.predict(classifier_X_test)
 y_pred = label_enc.inverse_transform(y_pred_tf)
+y_score = rf_model.predict_proba(classifier_X_test)
 
-accuracy = accuracy_score(y_true, y_pred)
-f1score = f1_score(y_true, y_pred, average = 'weighted')
+print(classification_report(y_true, y_pred))
 
-print("Random Forest Accuracy", accuracy)
-print("Random Forest F1 Score", f1score)
+micro_roc_auc_ovr = roc_auc_score(
+    y_true,
+    y_score,
+    multi_class="ovr",
+    average="micro"
+)
 
-cm = confusion_matrix(y_true, y_pred, labels=label_enc.inverse_transform(rf_model.classes_))
-disp = ConfusionMatrixDisplay(confusion_matrix=cm,
-                              display_labels=label_enc.inverse_transform(rf_model.classes_))
-disp.plot()
-plt.xticks(rotation=90)
-plt.show()
-
-# Check results on a random image
-n = np.random.randint(0, x_test.shape[0])
-img = x_test[n]
-plt.imshow(img)
-input_img = np.expand_dims(img, axis=0) # Expand dims so the input is (num images, x, y, c)
-input_img_feature = vgg_mdl.predict(input_img)
-input_img_features = input_img_feature.reshape(input_img_feature.shape[0], -1)
-pred = rf_model.predict(input_img_features)[0] 
-pred = label_enc.inverse_transform([pred])  # Reverse the label encoder to original name
-print("The prediction for this image is: ", pred)
-print("The actual label for this image is: ", test_labels[n])
+print(f"Micro-averaged One-vs-Rest ROC AUC score:\n{micro_roc_auc_ovr:.2f}")
 ```
+
+The full classification report for Random Forest model shows an overall accuracy of 0.65 which is OK considering that we are using a pre-trained CNN for the feature extraction. The ROC AUC is 0.97 which is actually quite good, but could be further improved. There are a few classes ("Withered", "Insect Damage", and "Fade") have poor precision using this model and it could potentially be improved with further hyperparameter tuning.
+
+```{python}
+#| label: cm-rf_model
+#| fig-cap: "Confusion Matrix for Random Forest Model"
+
+# Plot Confusion Matrix for Random Forest Model
+plot_confusion_matrix(rf_model, y_true=y_true, y_pred=y_pred, le = label_enc)
+```
+
+Looking at the confusion matrix, we can see that the Random Forest model has decent performance across the majority of classes, but struggles with a few classes in particular.
+
+```{python}
+#| label: randimg-rf_model
+#| fig-cap: "Random Image with Label and Prediction using RF Model"
+
+# Check results using a random image with the Random Forest Model
+result_random_img(rf_model, X_test=X_test, test_labels= y_true, feature_extractor=vgg_mdl, le=label_enc)
+```
+
+The random image above shows its true label and the predicted label using the Random Forest model.
+
+### XGBoost Classifier
+
+```{python}
+#| label: classification_report-xgboost_model
+
+# Test model performance
+y_pred_tf = xgboost_model.predict(classifier_X_test)
+y_pred = label_enc.inverse_transform(y_pred_tf)
+y_score = xgboost_model.predict_proba(classifier_X_test)
+
+print(classification_report(y_true, y_pred))
+
+micro_roc_auc_ovr = roc_auc_score(
+    y_true,
+    y_score,
+    multi_class="ovr",
+    average="micro"
+)
+
+print(f"Micro-averaged One-vs-Rest ROC AUC score:\n{micro_roc_auc_ovr:.2f}")
+```
+
+The full classification report for XGBoost model shows an overall accuracy of 0.709 which is quite good considering that we are using a pre-trained CNN for the feature extraction. The ROC AUC is 0.97 which is good by most standards. There are a few classes (i.e. "Fade" and "Slight Insect Damage") that have low precision using this model. However, model has quite good precision on the majority of classes with a weighted average of close to 73%. Nevertheless, the model could potentially be improved with further hyperparameter tuning (which I did not do as a result of the the time to fit this model on my mediocre laptop).
+
+```{python}
+#| label: cm-xgboost_model
+#| fig-cap: "Confusion Matrix for xgboost Model"
+
+# Plot Confusion Matrix for XGBoost Model
+plot_confusion_matrix(xgboost_model, y_true=y_true, y_pred=y_pred, le = label_enc)
+```
+
+Looking at the confusion matrix, we can see that the XGBoost model has good performance across the majority of classes.
+
+```{python}
+#| label: randimg-xgboost_model
+#| fig-cap: "Random Image with Label and Prediction using xgboost Model"
+
+# Check results on a random image with the xgboost model
+result_random_img(xgboost_model, X_test=X_test, test_labels= y_true, feature_extractor=vgg_mdl, le=label_enc)
+```
+
+The random image above shows its true label and the predicted label using the XGBoost model.
 
 ## Comparison Between Models
 
+```{python}
+#| label: class_report_all_models
+#| tbl-cap: "Simplified Classification Report Metrics for All Models"
+# Classification Reports for all models
+model_list = [knn_model, rf_model, xgboost_model]
+comparison_df = compare_classification_reports(list_of_models=model_list, y_test=y_test, X_test=classifier_X_test)
+filtered_df = comparison_df[comparison_df['metric'].isin(['accuracy', 'macro avg', 'weighted avg'])]
+filtered_df = filtered_df.drop(columns= 'support')
+display(Markdown(filtered_df.to_markdown(index = False)))
+```
+
+```{python}
+#| label: roc_all_models
+#| fig-cap: "ROC Curves for all Models Tested"
+
+# ROC Curves for all models
+plot_ROC_for_all(list_of_models=model_list, y_train=y_train, y_test=y_test, X_test=classifier_X_test)
+```
+
 ## Conclusions
+
+One can clearly see from the ROC curves, the accuracy, precision, recall, and f1-score that the best performing model was the XGBoost model with the Random Forest coming in a close second. The accuracy of both models using the pre-trained VGG16 model as a feature extractor is quite good considering that there is no dataset specific training activity on the CNN. This could be further improved, by augmenting the training image set and performing additional training on the dataset. However, this is out of the scope of this project on supervised learning techniques. The Random Forest model and XGBoost model could also benefit from a further exploration of tuning of the hyperparameters for each model. This again, was out of the scope of this project as I did not want to focus on a single modelling approach.
 
 ## References {#refs}
 
