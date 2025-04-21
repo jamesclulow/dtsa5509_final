@@ -494,6 +494,7 @@ To evaluate the performance of each model, we will look at the classification re
 
 ```{python}
 #| label: classification_report-knn_model
+#| warning: false
 
 # Test model performance
 y_pred_tf = knn_model.predict(classifier_X_test)
@@ -627,6 +628,8 @@ The random image above shows its true label and the predicted label using the XG
 ```{python}
 #| label: class_report_all_models
 #| tbl-cap: "Simplified Classification Report Metrics for All Models"
+#| warning: false
+
 # Classification Reports for all models
 model_list = [knn_model, rf_model, xgboost_model]
 comparison_df = compare_classification_reports(list_of_models=model_list, y_test=y_test, X_test=classifier_X_test)
