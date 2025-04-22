@@ -4,7 +4,9 @@ author: "James Clulow"
 format: html
 editor: visual
 jupyter: python3
-bibliography: "references.bib"
+bibliography: inst/references/references.bib
+csl: inst/references/apa-numeric-superscript-brackets.csl
+toc: true
 ---
 
 ```{python}
@@ -19,10 +21,11 @@ import matplotlib.pyplot as plt
 import cv2
 import numpy as np
 import torch
+import joblib
 
 from keras.applications.vgg16 import VGG16
 import xgboost as xgb
-from sklearn.model_selection import train_test_split, KFold, GridSearchCV, cross_val_score, RandomizedSearchCV
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn import preprocessing
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
@@ -237,7 +240,7 @@ The SCA method @spe2017washed for grading green arabica coffee breaks down coffe
 
 -   **Off Grade Coffee (5):** More than 86 defects in 300 grams.
 
-Coffee defects are broken down into **intrinsic defects** and **extrinsic defects**. **Intrinsic defects** are inherent to the beans themselves (i.e. full sour/full black), whereas **extrinsic defects** are related to the sample and not the beans (i.e. presence of foreign matter - stones or sticks in a sample). Defects are also classed as **primary** and **secondary** defects. In the SCA grading method, **primary defects** are penalized more than **secondary defects** due to the nature of the defects. @tbl-primary_defects and @tbl-secondary_defects below summarize primary and secondary defects[@Carpenter_2021; @Griffin_2006].
+Coffee defects are broken down into **intrinsic defects** and **extrinsic defects**. **Intrinsic defects** are inherent to the beans themselves (i.e. full sour/full black), whereas **extrinsic defects** are related to the sample and not the beans (i.e. presence of foreign matter - stones or sticks in a sample). Defects are also classed as **primary** and **secondary** defects. In the SCA grading method, **primary defects** are penalized more than **secondary defects** due to the nature of the defects. @tbl-primary_defects and @tbl-secondary_defects below summarize primary and secondary defects  [@Carpenter_2021; @Griffin_2006].
 
 | Primary Defect | Number of occurrences equal to one full defect |
 |----------------|------------------------------------------------|
@@ -476,14 +479,27 @@ rf_model
 
 ### XGBoost Classifier
 
-Finally, I trained an XGBoost classifier using the histogram tree method. I opted not to perform cross validation on this model as it took a significant amount of time to train on my laptop which has limited RAM and computing power.
+Finally, I trained an XGBoost classifier using the histogram tree method using the code below and exported the trained model to file using `joblib`.
 
 ```{python}
 #| label: train-xgboost_model
+#| eval: false
+#| echo: true
 
 # Train XGBoost Model
 xgboost_model = xgb.XGBClassifier(tree_method="hist")
 xgboost_model.fit(classifier_X_train, y_train)
+
+joblib.dump(xgboost_model, 'inst/xgboost_model.pkl')
+```
+
+I exported the saved model using `joblib` to facilitate the evaluation of this notebook as it is time consuming train the model. I opted not to perform cross validation on this model as it took a significant amount of time to train on my laptop which has limited RAM and computing power. Below, we load the trained model from the `.pkl` file.
+
+```{python}
+#| label: load-xgboost_model
+
+# Load trained XGBoost Model
+xgboost_model = joblib.load('inst/xgboost_model.pkl')
 ```
 
 ## Model Performance Metrics
@@ -648,13 +664,21 @@ plot_ROC_for_all(list_of_models=model_list, y_train=y_train, y_test=y_test, X_te
 
 ## Conclusions
 
-One can clearly see from the ROC curves, the accuracy, precision, recall, and f1-score that the best performing model was the XGBoost model with the Random Forest coming in a close second. The accuracy of both models using the pre-trained VGG16 model as a feature extractor is quite good considering that there is no dataset specific training activity on the CNN. This could be further improved, by augmenting the training image set and performing additional training on the dataset. However, this is out of the scope of this project on supervised learning techniques. The Random Forest model and XGBoost model could also benefit from a further exploration of tuning of the hyperparameters for each model. This again, was out of the scope of this project as I did not want to focus on a single modelling approach.
+One can clearly see from the ROC curves, the accuracy, precision, recall, and f1-score that the best performing model was the XGBoost model with the Random Forest coming in a close second. The KNN performed poorly and does not seem to be very well adapted to this type of application. The accuracy of both models using the pre-trained VGG16 model as a feature extractor is quite good considering that there is no dataset specific training activity on the CNN. This could be further improved, by augmenting the training image set and performing additional training on the dataset. However, this is out of the scope of this project on supervised learning techniques. The Random Forest model and XGBoost model could also benefit from a further exploration of tuning of the hyperparameters for each model. This again, was out of the scope of this project as the goal was to exam mutliple types of classification models in the context of supervised learning techniques.
 
-## References {#refs}
+One aspect of this data set that is missing if we consider applying these models to the real world problem of detecting and quantifying green coffee defects is the lack of "normal" or "non-defective beans" in the dataset. This would help to better establish baseline defects vs normal performance metrics which would ensure that the model does not identify false positives in the normal beans. Furthermore, the dataset uses photos of individual beans which is not practical. It would make sense to combine a trained model with a YOLO object detection algorithm to identify individual beans in an image of multiple beans together. This would be a nice problem to solve in the context of a deep learning project.
+
+## References
+
+::: {#refs}
+:::
 
 ## System Information
 
 ```{python}
+#| label: system-information
+
+# Print platform info
 import platform
 print(platform.platform())
 print(platform.processor())
