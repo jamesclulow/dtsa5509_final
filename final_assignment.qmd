@@ -1,14 +1,15 @@
 ---
 title: "Week 7 - Final Project DTSA5509"
-author: "James Clulow"
+author: "James S Clulow"
 format: html
+toc: true
+toc-location: left
+toc-expand: true
+embed-resources: true
 editor: visual
 jupyter: python3
 bibliography: inst/references/references.bib
 csl: inst/references/apa-numeric-superscript-brackets.csl
-toc: true
-toc-location: left
-toc-expand: true
 ---
 
 ```{python}
